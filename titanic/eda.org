@@ -1,0 +1,317 @@
+#+TITLE: Titanic EDA
+#+PROPERTY: header-args:python :session titanic :results output :exports both
+#+STARTUP: overview
+
+* Setup
+#+begin_src python
+import sys, os
+os.chdir(os.path.dirname(os.path.abspath("eda.org")))
+sys.path.insert(0, ".")
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+os.makedirs("plots", exist_ok=True)
+print("Ready.")
+#+end_src
+
+* Load Data
+#+begin_src python
+train = pd.read_csv("data/train.csv")
+test  = pd.read_csv("data/test.csv")
+print(f"train: {train.shape}   test: {test.shape}")
+print(train.dtypes)
+#+end_src
+
+#+begin_src python
+train.head()
+#+end_src
+
+* Missing Values
+
+#+begin_src python
+missing = (
+    train.isnull().sum()
+    .rename("count")
+    .to_frame()
+    .assign(pct=lambda d: d["count"] / len(train) * 100)
+    .query("count > 0")
+    .sort_values("pct", ascending=False)
+)
+print(missing)
+#+end_src
+
+#+begin_src python :results file link
+fig = px.bar(
+    missing.reset_index(),
+    x="pct", y="index",
+    orientation="h",
+    labels={"pct": "% missing", "index": "Column"},
+    title="Missing Values",
+    color="pct",
+    color_continuous_scale="Reds",
+    text_auto=".1f",
+)
+fig.update_layout(yaxis_title=None, coloraxis_showscale=False)
+fig.write_html("plots/missing.html")
+"plots/missing.html"
+#+end_src
+
+* Survival Overview
+
+#+begin_src python
+print(train["Survived"].value_counts())
+print(f"\nOverall survival rate: {train['Survived'].mean():.1%}")
+#+end_src
+
+#+begin_src python :results file link
+counts = train["Survived"].value_counts().reset_index()
+counts.columns = ["Survived", "Count"]
+counts["Label"] = counts["Survived"].map({0: "Died", 1: "Survived"})
+
+fig = px.bar(
+    counts, x="Label", y="Count",
+    color="Label",
+    color_discrete_map={"Died": "#EF553B", "Survived": "#00CC96"},
+    title="Survival Count",
+    text="Count",
+)
+fig.update_traces(textposition="outside")
+fig.update_layout(showlegend=False)
+fig.write_html("plots/survival_count.html")
+"plots/survival_count.html"
+#+end_src
+
+* Numerical Distributions
+
+** Age
+
+#+begin_src python :results file link
+fig = px.histogram(
+    train, x="Age", color="Survived",
+    barmode="overlay",
+    nbins=30,
+    color_discrete_map={0: "#EF553B", 1: "#00CC96"},
+    labels={"Survived": "Survived"},
+    title="Age Distribution by Survival",
+    opacity=0.7,
+)
+fig.write_html("plots/age_dist.html")
+"plots/age_dist.html"
+#+end_src
+
+** Fare
+
+#+begin_src python :results file link
+fig = px.histogram(
+    train[train["Fare"] < 300], x="Fare", color="Survived",
+    barmode="overlay",
+    nbins=40,
+    color_discrete_map={0: "#EF553B", 1: "#00CC96"},
+    title="Fare Distribution by Survival (Fare < 300)",
+    opacity=0.7,
+)
+fig.write_html("plots/fare_dist.html")
+"plots/fare_dist.html"
+#+end_src
+
+* Categorical Analysis
+
+** Sex
+
+#+begin_src python :results file link
+sex_surv = train.groupby("Sex")["Survived"].mean().reset_index()
+sex_surv.columns = ["Sex", "SurvivalRate"]
+
+fig = px.bar(
+    sex_surv, x="Sex", y="SurvivalRate",
+    color="Sex",
+    title="Survival Rate by Sex",
+    text=sex_surv["SurvivalRate"].map("{:.1%}".format),
+)
+fig.update_layout(yaxis_tickformat=".0%", showlegend=False)
+fig.write_html("plots/sex_survival.html")
+"plots/sex_survival.html"
+#+end_src
+
+** Passenger Class
+
+#+begin_src python :results file link
+pclass_surv = train.groupby("Pclass")["Survived"].mean().reset_index()
+pclass_surv.columns = ["Pclass", "SurvivalRate"]
+pclass_surv["Pclass"] = pclass_surv["Pclass"].astype(str)
+
+fig = px.bar(
+    pclass_surv, x="Pclass", y="SurvivalRate",
+    color="Pclass",
+    title="Survival Rate by Passenger Class",
+    text=pclass_surv["SurvivalRate"].map("{:.1%}".format),
+)
+fig.update_layout(yaxis_tickformat=".0%", showlegend=False)
+fig.write_html("plots/pclass_survival.html")
+"plots/pclass_survival.html"
+#+end_src
+
+** Embarked
+
+#+begin_src python :results file link
+emb_surv = train.groupby("Embarked")["Survived"].mean().reset_index()
+emb_surv.columns = ["Embarked", "SurvivalRate"]
+
+fig = px.bar(
+    emb_surv, x="Embarked", y="SurvivalRate",
+    color="Embarked",
+    title="Survival Rate by Port of Embarkation",
+    text=emb_surv["SurvivalRate"].map("{:.1%}".format),
+)
+fig.update_layout(yaxis_tickformat=".0%", showlegend=False)
+fig.write_html("plots/embarked_survival.html")
+"plots/embarked_survival.html"
+#+end_src
+
+** Sex × Pclass
+
+#+begin_src python :results file link
+cross = train.groupby(["Pclass", "Sex"])["Survived"].mean().reset_index()
+cross.columns = ["Pclass", "Sex", "SurvivalRate"]
+cross["Pclass"] = cross["Pclass"].astype(str)
+
+fig = px.bar(
+    cross, x="Pclass", y="SurvivalRate",
+    color="Sex", barmode="group",
+    title="Survival Rate by Pclass and Sex",
+    text=cross["SurvivalRate"].map("{:.1%}".format),
+)
+fig.update_layout(yaxis_tickformat=".0%")
+fig.write_html("plots/sex_pclass_survival.html")
+"plots/sex_pclass_survival.html"
+#+end_src
+
+* Correlations
+
+#+begin_src python :results file link
+num_cols = ["Survived", "Pclass", "Age", "SibSp", "Parch", "Fare"]
+corr = train[num_cols].corr().round(2)
+print(corr)
+
+fig = px.imshow(
+    corr,
+    text_auto=True,
+    color_continuous_scale="RdBu_r",
+    zmin=-1, zmax=1,
+    title="Feature Correlation Heatmap",
+)
+fig.write_html("plots/correlation.html")
+"plots/correlation.html"
+#+end_src
+
+* Engineered Features Preview
+
+#+begin_src python
+import sys
+sys.path.insert(0, ".")
+from features import build_features, _extract_title
+
+train["Title"] = train["Name"].apply(_extract_title)
+train["FamilySize"] = train["SibSp"] + train["Parch"] + 1
+train["IsAlone"] = (train["FamilySize"] == 1).astype(int)
+print(train[["Name", "Title"]].head(10))
+print("\nTitle value counts:")
+print(train["Title"].value_counts())
+#+end_src
+
+** Survival by Title
+
+#+begin_src python :results file link
+title_surv = train.groupby("Title")["Survived"].mean().reset_index()
+title_surv.columns = ["Title", "SurvivalRate"]
+title_surv = title_surv.sort_values("SurvivalRate", ascending=False)
+
+fig = px.bar(
+    title_surv, x="Title", y="SurvivalRate",
+    color="SurvivalRate",
+    color_continuous_scale="Viridis",
+    title="Survival Rate by Title",
+    text=title_surv["SurvivalRate"].map("{:.1%}".format),
+)
+fig.update_layout(yaxis_tickformat=".0%", coloraxis_showscale=False)
+fig.write_html("plots/title_survival.html")
+"plots/title_survival.html"
+#+end_src
+
+** Survival by Family Size
+
+#+begin_src python :results file link
+fam_surv = train.groupby("FamilySize")["Survived"].mean().reset_index()
+fam_surv.columns = ["FamilySize", "SurvivalRate"]
+
+fig = px.bar(
+    fam_surv, x="FamilySize", y="SurvivalRate",
+    color="SurvivalRate",
+    color_continuous_scale="Viridis",
+    title="Survival Rate by Family Size",
+    text=fam_surv["SurvivalRate"].map("{:.1%}".format),
+)
+fig.update_layout(yaxis_tickformat=".0%", coloraxis_showscale=False)
+fig.write_html("plots/familysize_survival.html")
+"plots/familysize_survival.html"
+#+end_src
+
+** Age Group vs Pclass Heatmap
+
+#+begin_src python :results file link
+train["AgeGroup"] = pd.cut(
+    train["Age"].fillna(train["Age"].median()),
+    bins=[0, 12, 18, 35, 60, 100],
+    labels=["Child", "Teen", "Adult", "Middle", "Senior"],
+)
+heat = train.groupby(["AgeGroup", "Pclass"])["Survived"].mean().unstack()
+print(heat.round(2))
+
+fig = px.imshow(
+    heat,
+    text_auto=".2f",
+    color_continuous_scale="RdYlGn",
+    zmin=0, zmax=1,
+    title="Survival Rate: Age Group × Pclass",
+    labels={"x": "Pclass", "y": "Age Group", "color": "Survival Rate"},
+)
+fig.write_html("plots/agegroup_pclass_heatmap.html")
+"plots/agegroup_pclass_heatmap.html"
+#+end_src
+
+* Quick Feature Importance (Random Forest)
+
+#+begin_src python
+from sklearn.ensemble import RandomForestClassifier
+from features import build_features
+
+X, feat_cols, enc = build_features(train.drop(columns=["Title", "FamilySize", "IsAlone", "AgeGroup"], errors="ignore"))
+y = train["Survived"].values
+
+rf = RandomForestClassifier(n_estimators=200, max_depth=6, random_state=42)
+rf.fit(X, y)
+
+importance = pd.Series(rf.feature_importances_, index=feat_cols).sort_values(ascending=False)
+print(importance.round(4))
+#+end_src
+
+#+begin_src python :results file link
+fig = px.bar(
+    importance.reset_index(),
+    x="index", y=0,
+    labels={"index": "Feature", "0": "Importance"},
+    title="Random Forest Feature Importance",
+    color=0,
+    color_continuous_scale="Blues",
+)
+fig.update_layout(coloraxis_showscale=False, xaxis_tickangle=-30)
+fig.write_html("plots/feature_importance.html")
+"plots/feature_importance.html"
+#+end_src

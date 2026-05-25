@@ -1,0 +1,22 @@
+# Kaggle data — download via `kaggle competitions download`
+**/data/
+
+# Generated outputs
+**/mlruns/
+**/plots/
+**/submissions/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+
+# Jupyter / org-babel checkpoints
+.ipynb_checkpoints/
+*~
+
+# Archives
+*.zip
+*.tar.gz
