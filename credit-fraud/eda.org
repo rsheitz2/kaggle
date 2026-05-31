@@ -1,0 +1,280 @@
+#+TITLE: Credit Fraud EDA
+#+PROPERTY: header-args:python :session credit-fraud :results output :exports both
+#+STARTUP: overview
+
+* Setup
+#+begin_src python
+import sys, os
+os.chdir(os.path.dirname(os.path.abspath("eda.org")))
+sys.path.insert(0, ".")
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+os.makedirs("plots", exist_ok=True)
+
+# ── Set these after downloading data ──────────────────────────────────────────
+TARGET_COL = "target"   # TODO: update to actual target column name
+ID_COLS = []            # columns to exclude (IDs, row keys), e.g. ["id"]
+# ─────────────────────────────────────────────────────────────────────────────
+print("Ready.")
+#+end_src
+
+* Load Data
+#+begin_src python
+train = pd.read_csv("data/train.csv")
+test  = pd.read_csv("data/test.csv")
+print(f"train: {train.shape}   test: {test.shape}")
+print(train.dtypes.to_string())
+#+end_src
+
+#+begin_src python
+print(train.head(3).to_string())
+#+end_src
+
+* Target Distribution
+#+begin_src python
+vc = train[TARGET_COL].value_counts()
+rate = train[TARGET_COL].mean()
+print(vc)
+print(f"\nPositive rate: {rate:.2%}  (imbalance ratio ~1:{int((1 - rate) / rate + 0.5):.0f})")
+#+end_src
+
+#+begin_src python :results file link
+counts = train[TARGET_COL].value_counts().reset_index()
+counts.columns = [TARGET_COL, "Count"]
+counts["Label"] = counts[TARGET_COL].map({0: "No Default / Legit", 1: "Default / Fraud"})
+
+fig = px.bar(
+    counts, x="Label", y="Count",
+    color="Label",
+    color_discrete_map={"No Default / Legit": "#00CC96", "Default / Fraud": "#EF553B"},
+    title=f"Target Distribution  (positive rate = {train[TARGET_COL].mean():.2%})",
+    text="Count",
+)
+fig.update_traces(textposition="outside")
+fig.update_layout(showlegend=False)
+fig.write_html("plots/target_dist.html")
+"plots/target_dist.html"
+#+end_src
+
+* Missing Values
+#+begin_src python
+missing = (
+    train.isnull().sum()
+    .rename("count")
+    .to_frame()
+    .assign(pct=lambda d: d["count"] / len(train) * 100)
+    .query("count > 0")
+    .sort_values("pct", ascending=False)
+)
+if missing.empty:
+    print("No missing values.")
+else:
+    print(missing)
+#+end_src
+
+#+begin_src python :results file link
+if missing.empty:
+    fig = go.Figure()
+    fig.add_annotation(text="No missing values", xref="paper", yref="paper",
+                       x=0.5, y=0.5, showarrow=False, font={"size": 20})
+else:
+    fig = px.bar(
+        missing.reset_index(),
+        x="pct", y="index",
+        orientation="h",
+        labels={"pct": "% missing", "index": "Column"},
+        title="Missing Values",
+        color="pct",
+        color_continuous_scale="Reds",
+        text_auto=".1f",
+    )
+    fig.update_layout(yaxis_title=None, coloraxis_showscale=False)
+fig.write_html("plots/missing.html")
+"plots/missing.html"
+#+end_src
+
+* Discover Features
+#+begin_src python
+feature_cols = [c for c in train.columns if c != TARGET_COL and c not in ID_COLS]
+num_cols = train[feature_cols].select_dtypes(include="number").columns.tolist()
+cat_cols = train[feature_cols].select_dtypes(include="object").columns.tolist()
+print(f"Numeric features  ({len(num_cols)}): {num_cols}")
+print(f"Categorical features ({len(cat_cols)}): {cat_cols}")
+#+end_src
+
+* Numeric Distributions
+#+begin_src python :results file link
+for col in num_cols[:12]:
+    fig = px.histogram(
+        train, x=col, color=TARGET_COL,
+        barmode="overlay",
+        nbins=40,
+        color_discrete_map={0: "#00CC96", 1: "#EF553B"},
+        title=f"{col} Distribution by Target",
+        opacity=0.7,
+    )
+    fig.write_html(f"plots/num_{col}.html")
+    print(f"plots/num_{col}.html")
+
+f"plots/num_{num_cols[0]}.html" if num_cols else "plots/target_dist.html"
+#+end_src
+
+* Categorical Features
+#+begin_src python :results file link
+for col in cat_cols[:8]:
+    rate_df = (
+        train.groupby(col)[TARGET_COL]
+        .agg(["mean", "count"])
+        .reset_index()
+        .rename(columns={"mean": "DefaultRate", "count": "Count"})
+        .sort_values("DefaultRate", ascending=False)
+    )
+    fig = px.bar(
+        rate_df, x=col, y="DefaultRate",
+        color="DefaultRate",
+        color_continuous_scale="RdYlGn_r",
+        title=f"Default Rate by {col}",
+        text=rate_df["DefaultRate"].map("{:.1%}".format),
+        hover_data=["Count"],
+    )
+    fig.update_layout(yaxis_tickformat=".0%", coloraxis_showscale=False)
+    fig.write_html(f"plots/cat_{col}.html")
+    print(f"plots/cat_{col}.html")
+
+f"plots/cat_{cat_cols[0]}.html" if cat_cols else "plots/target_dist.html"
+#+end_src
+
+* Correlation Heatmap
+#+begin_src python :results file link
+corr_cols = num_cols + [TARGET_COL]
+corr = train[corr_cols].corr().round(2)
+print(f"Correlations with {TARGET_COL}:")
+print(corr[TARGET_COL].sort_values(ascending=False).drop(TARGET_COL).to_string())
+
+fig = px.imshow(
+    corr,
+    text_auto=True,
+    color_continuous_scale="RdBu_r",
+    zmin=-1, zmax=1,
+    title="Feature Correlation Heatmap",
+)
+fig.update_layout(width=900, height=900)
+fig.write_html("plots/correlation.html")
+"plots/correlation.html"
+#+end_src
+
+* Amount / Value Skew
+#+begin_src python :results file link
+skew = train[num_cols].skew().abs().sort_values(ascending=False)
+high_skew = skew[skew > 1].index.tolist()
+print(f"High-skew columns (|skew| > 1): {high_skew[:10]}")
+
+if high_skew:
+    col = high_skew[0]
+    fig = px.histogram(
+        train, x=col, color=TARGET_COL,
+        barmode="overlay",
+        nbins=50,
+        log_y=True,
+        color_discrete_map={0: "#00CC96", 1: "#EF553B"},
+        title=f"{col} Distribution (log-y scale) by Target",
+        opacity=0.7,
+    )
+else:
+    fig = go.Figure()
+    fig.add_annotation(text="No high-skew columns found", xref="paper", yref="paper",
+                       x=0.5, y=0.5, showarrow=False)
+fig.write_html("plots/amount_dist.html")
+"plots/amount_dist.html"
+#+end_src
+
+* Key Feature × Target (Violin)
+#+begin_src python :results file link
+top_corr = (
+    corr[TARGET_COL].drop(TARGET_COL)
+    .abs()
+    .sort_values(ascending=False)
+    .head(5)
+    .index.tolist()
+)
+print(f"Top correlated features: {top_corr}")
+
+for col in top_corr:
+    fig = px.violin(
+        train, y=col, x=TARGET_COL, box=True, points="outliers",
+        color=TARGET_COL,
+        color_discrete_map={0: "#00CC96", 1: "#EF553B"},
+        title=f"{col} by Target",
+    )
+    fig.update_layout(xaxis_title="Target", showlegend=False)
+    fig.write_html(f"plots/violin_{col}.html")
+    print(f"plots/violin_{col}.html")
+
+f"plots/violin_{top_corr[0]}.html" if top_corr else "plots/correlation.html"
+#+end_src
+
+* Quick Feature Importance (Random Forest)
+#+begin_src python
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+
+X_rf = train[feature_cols].copy()
+for col in cat_cols:
+    le = LabelEncoder()
+    X_rf[col] = le.fit_transform(X_rf[col].astype(str))
+X_rf = X_rf.fillna(X_rf.median(numeric_only=True))
+y_rf = train[TARGET_COL].values
+
+rf = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42, n_jobs=-1)
+rf.fit(X_rf, y_rf)
+
+importance = pd.DataFrame({
+    "Feature": feature_cols,
+    "Importance": rf.feature_importances_,
+}).sort_values("Importance", ascending=False)
+print(importance.to_string(index=False))
+#+end_src
+
+#+begin_src python :results file link
+fig = px.bar(
+    importance, x="Feature", y="Importance",
+    title="Random Forest Feature Importance",
+    color="Importance",
+    color_continuous_scale="Blues",
+)
+fig.update_layout(coloraxis_showscale=False, xaxis_tickangle=-30)
+fig.write_html("plots/feature_importance.html")
+"plots/feature_importance.html"
+#+end_src
+
+* Key Findings for Feature Engineering
+
+Fill this section after running the EDA above, then populate =features.py=.
+
+** Data overview
+- Target column: =TODO=
+- ID columns to drop: =TODO=
+- Class imbalance ratio: =TODO=
+
+** Numeric features
+- High-skew columns to log-transform: =TODO=
+- Columns to bin (high cardinality): =TODO=
+- Top predictors by correlation: =TODO=
+
+** Categorical features
+- Columns to encode: =TODO=
+- High-cardinality categories to group: =TODO=
+
+** Missing value strategy
+- =TODO=
+
+** Engineered feature ideas
+- =TODO=
